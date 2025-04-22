@@ -1,46 +1,57 @@
-Screenbot Chat Assistant
-
-Screenbot is a lightweight desktop chatbot that combines screen capture, OCR, and a large language model to answer user queries based on the current contents of your open windows.
+Screenbot is a lightweight desktop chatbot that combines screen capture, OCR, and a large language model to answer your questions based on the content of your open windows.
 
 Features
 
-Context‑aware: Filters and OCRs only the windows relevant to your question.
+Context-aware: Automatically filters and OCRs only the windows relevant to your query.
 
-History memory: Maintains conversation context across turns.
+Conversation memory: Maintains dialogue history for more coherent multi-turn interactions.
 
-Cross‑platform: Uses wmctrl and ImageMagick on Linux; easily extensible to other environments.
+Cross-platform: Uses wmctrl and ImageMagick on Linux; easily extensible to other environments.
 
-Easy interface: Simple chat UI built with Gradio.
+Simple UI: Chat interface built with Gradio for fast setup and use.
 
-Getting Started
+🛠️ Installation
 
-Clone the repository:
+Clone the repo
 
 git clone https://github.com/yourusername/screenbot.git
 cd screenbot
 
-Create and activate a virtual environment (recommended):
+Create a virtual environment (recommended)
 
 python3 -m venv .venv
 source .venv/bin/activate
 
-Install dependencies:
+Install dependencies
 
 pip install -r requirements.txt
 
-Create a .env file in the project root with your OpenAI API key:
+Configure your API key
+Create a file named .env in the project root:
 
 OPENAI_API_KEY=your_api_key_here
 
-Run the chat interface:
+Run the chat interface
 
 python gui.py
 
-Usage
+💬 Usage
 
-Type a question into the chat input.
+Open your preferred windows and applications.
 
-The bot will automatically capture and OCR relevant windows, then respond based on that content and past dialogue.
+Type a question or command into the chat box.
 
-Use standard copy/paste to export responses.
+Screenbot will capture and OCR relevant windows, consult the model, and reply.
+
+Copy/paste responses as needed.
+
+📦 Files
+
+gui.py: Launches the Gradio chat interface.
+
+windows_to_text.py: Manages window filtering, OCR, and LLM interaction with built-in history.
+
+.env: Stores your API key (not committed).
+
+requirements.txt: Lists project dependencies.
 
