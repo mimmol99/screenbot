@@ -1,0 +1,6 @@
+gradio>=4.25
+openai>=1.14
+python-dotenv>=1.0
+pytesseract>=0.3.10
+pillow>=10.0
+pydantic>=2.5
