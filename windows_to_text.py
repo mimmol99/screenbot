@@ -1,5 +1,6 @@
 # [Folder] screenchat
-#   [File] windows_to_text.py
+#  [File] windows_to_text.py
+# --- Start of Optimized windows_to_text.py ---
 import io
 import subprocess
 import pytesseract
@@ -9,7 +10,6 @@ from pydantic import BaseModel, ValidationError, Field
 from openai import OpenAI
 from dotenv import load_dotenv
 import traceback
-import json # Keep for potential fallback or other uses
 
 # Load environment variables
 dotenv_path = load_dotenv()
@@ -18,10 +18,10 @@ if not api_key:
     raise ValueError("OPENAI_API_KEY not found in environment variables or .env file.")
 client = OpenAI(api_key=api_key)
 # --- Using the user-specified model ---
-MODEL = "gpt-4.1-nano"
-# Warning: 'gpt-4.1-nano' is not a standard OpenAI model identifier.
-# Its existence and capability for structured output are uncertain.
-# Smaller models may struggle with this task.
+MODEL = "gpt-4.1-mini"
+# Warning: 'gpt-4.1-mini' might not be a standard OpenAI model identifier.
+# Consider using 'gpt-4o-mini' or another verified model if errors occur.
+# Smaller models may struggle with structured output tasks.
 
 
 class Window(BaseModel):
@@ -78,6 +78,7 @@ def filter_windows(prompt: str, all_windows: list[tuple[str, str]]) -> tuple[lis
         )
 
         # Access the parsed Pydantic object using 'output_parsed'
+        selected_windows = [] # Initialize
         if hasattr(response, 'output_parsed') and response.output_parsed:
              parsed_data: WindowList = response.output_parsed
              # Check if the parsed data is actually of the expected type
@@ -87,9 +88,9 @@ def filter_windows(prompt: str, all_windows: list[tuple[str, str]]) -> tuple[lis
                  print(f"Warning: Parsed data is not of type WindowList. Type received: {type(parsed_data)}")
                  return [], []
         else:
-             print("Warning: Model response did not contain parsed output or parsing failed.")
-             # print(f"Raw response object (if available): {response}") # For debugging if needed
-             return [], []
+            print("Warning: Model response did not contain parsed output or parsing failed.")
+            # print(f"Raw response object (if available): {response}") # For debugging if needed
+            return [], []
 
 
         # Validate selected windows against the original list
@@ -110,19 +111,19 @@ def filter_windows(prompt: str, all_windows: list[tuple[str, str]]) -> tuple[lis
 
     # Catch Pydantic validation errors
     except ValidationError as pyd_err:
-         print(f"Error validating model's output against Pydantic model: {pyd_err}")
-         # The raw response might be harder to get from client.responses.parse on error
-         return [], []
+        print(f"Error validating model's output against Pydantic model: {pyd_err}")
+        # The raw response might be harder to get from client.responses.parse on error
+        return [], []
     # Catch potential API errors, attribute errors if method/model is invalid, etc.
     except AttributeError as attr_err:
-         print(f"AttributeError: Could not call 'client.responses.parse' or access 'output_parsed'. Check SDK version and method name. Error: {attr_err}")
-         traceback.print_exc()
-         return [], []
+        print(f"AttributeError: Could not call 'client.responses.parse' or access 'output_parsed'. Check SDK version, method name, and model compatibility. Error: {attr_err}")
+        traceback.print_exc()
+        return [], []
     except Exception as e:
         print(f"An unexpected error occurred during structured window filtering with client.responses.parse: {e}")
         # Check if the error message suggests model incompatibility
-        if "model is not supported" in str(e).lower() or "invalid model" in str(e).lower():
-             print(f"Error might be due to model '{MODEL}' not supporting this feature or not existing.")
+        if "model is not supported" in str(e).lower() or "invalid model" in str(e).lower() or "responses.parse" in str(e).lower():
+            print(f"Error might be due to model '{MODEL}' not supporting this feature, the feature not being available, or the model not existing.")
         traceback.print_exc()
         return [], []
 
@@ -177,12 +178,12 @@ def extract_windows_text(prompt: str, use_all_windows: bool) -> tuple[str, list[
             img = Image.open(io.BytesIO(cap_proc.stdout))
             try:
                  # Perform OCR using pytesseract
-                text = pytesseract.image_to_string(img)
-                texts.append(f"Window Name: {name}\n--- Start Content ---\n{text}\n--- End Content ---")
-                processed_window_names.append(name)
-                print(f"Successfully OCR'd window: {name}")
+                 text = pytesseract.image_to_string(img)
+                 texts.append(f"Window Name: {name}\n--- Start Content ---\n{text}\n--- End Content ---")
+                 processed_window_names.append(name)
+                 print(f"Successfully OCR'd window: {name}")
             except pytesseract.TesseractNotFoundError:
-                raise RuntimeError("Tesseract is not installed or not in PATH.")
+                 raise RuntimeError("Tesseract is not installed or not in PATH.")
             except Exception as ocr_err:
                  print(f"Error during OCR for window '{name}' ({wid}): {ocr_err}")
         except FileNotFoundError:
@@ -196,7 +197,8 @@ def extract_windows_text(prompt: str, use_all_windows: bool) -> tuple[str, list[
 
 
     combined_text = "\n\n".join(texts)
-    # print(f"Combined text extracted:\n{combined_text[:500]}...") # Print start of text
+    # Optimization: Removed commented-out print statement below
+    # # print(f"Combined text extracted:\n{combined_text[:500]}...")
     return combined_text, processed_window_names # Return text and names of successfully processed windows
 
 
@@ -270,7 +272,6 @@ class ChatSession:
              return f"Error communicating with AI model: {e}"
 
         # Add interaction to history
-        # Store the user message *without* the potentially huge screen context
         # Store the full user message including context that was sent to the model
         self.history.append({"role": "user", "content": user_content})
         self.history.append({"role": "assistant", "content": answer})
@@ -283,6 +284,13 @@ class ChatSession:
             final_response = f"(Info: Used content from windows: {window_list_str})\n\n{answer}"
         elif use_all_windows and used_window_names:
              final_response = f"(Info: Used content from all detected windows)\n\n{answer}"
+        elif not use_all_windows and not used_window_names and screen_text: # Model filtered, OCR worked, but model selected none
+             final_response = f"(Info: Model did not select specific windows based on the prompt, but screen context was searched.)\n\n{answer}"
+        elif not use_all_windows and not used_window_names and not screen_text: # Model filtered, but no windows found/OCR'd
+             final_response = f"(Info: No specific windows selected and no screen text was available.)\n\n{answer}"
+        # Add other cases? E.g. use_all_windows=True but no windows found/OCR'd
+        elif use_all_windows and not used_window_names:
+             final_response = f"(Info: Tried using all windows, but none could be processed.)\n\n{answer}"
 
 
         print(f"Assistant Response:\n{final_response}")
@@ -307,3 +315,4 @@ def answer_prompt_using_screen(prompt: str, use_all_windows: bool) -> str:
          use_all_windows = False
 
     return session.ask(prompt.strip(), use_all_windows)
+# --- End of Optimized windows_to_text.py ---
