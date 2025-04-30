@@ -1,25 +1,48 @@
-# 📸 Screenchat
+# 📸 Screenchat - Chat With Your Desktop
 
-Screenchat is a lightweight desktop assistant that **reads the text on your open application windows in real time (via OCR)** and lets you query that information through an OpenAI‑powered chat interface built with [Gradio](https://gradio.app/).
+Screenchat reads text from your open windows (using OCR) and lets you ask an AI about it via a simple chat interface. Runs on Linux.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.9%2B-blue.svg" alt="python badge">
-  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="license badge">
+  <img src="https://img.shields.io/badge/Python-3.9%2B-blue.svg" alt="Python Badge">
+  <img src="https://img.shields.io/badge/OS-Linux-orange.svg" alt="OS Badge">
+  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License Badge">
 </p>
 
 ## ✨ Features
-- **One‑click chat UI** – talk to your desktop with Gradio’s ChatInterface  
-- **Context‑aware answers** – only the windows relevant to your prompt are OCR’d (selection done by the LLM) or check the box to force all windows usage.
-- **Stateless OCR pipeline** – uses `wmctrl` + ImageMagick’s `import` + Tesseract; no screenshots written to disk  
-- **Session memory** – past turns are kept in `ChatSession`, so follow‑ups work naturally  
-- **Environment‑only keys** – reads `OPENAI_API_KEY` from a `.env` file 
 
-## 🖥  Quick start
+* Reads text from any open window (via OCR).
+* Simple Gradio chat interface.
+* Smart context (AI picks relevant windows) or force reading all windows (via always-visible checkbox).
+* See your messages instantly while AI responds.
+* Remembers conversation history for follow-ups.
+* Private: No screenshots saved to disk; API key stored locally in `.env`.
 
+## 🚀 Setup
+
+**1. Requirements:**
+* **System:** Linux, Python 3.9+, `git`.
+* **Tools:** `wmctrl`, `imagemagick`, `tesseract-ocr` (plus language packs like `-eng`).
+    * *(Debian/Ubuntu): `sudo apt update && sudo apt install wmctrl imagemagick tesseract-ocr tesseract-ocr-eng`*
+    * *(Fedora): `sudo dnf check-update && sudo dnf install wmctrl ImageMagick tesseract tesseract-langpack-eng`*
+
+**2. Installation Steps:**
 ```bash
-git clone https://github.com/your‑username/screenchat.git
+# 1. Clone your repository
+git clone [https://github.com/mimmol99/screenchat.git](https://github.com/mimmol99/screenchat.git)
 cd screenchat
-python -m venv .venv && source .venv/bin/activate
+
+# 2. Install system tools (if not already done - see Requirements above)
+
+# 3. Setup Python environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate  # Use .venv\Scripts\activate on Windows/Git Bash
+
+# 4. Install Python packages from requirements file
 pip install -r requirements.txt
-cp .env.example .env         # then paste your OPENAI_API_KEY
-python screenchat/gui.py
+
+# 5. Configure API Key
+cp .env.example .env
+# --> Now edit .env and add your OPENAI_API_KEY
+
+# 6. Run!
+python gui.py
