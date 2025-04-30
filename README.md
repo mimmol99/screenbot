@@ -12,6 +12,7 @@ Screenchat reads text from your open windows (using OCR) and lets you ask an AI 
 
 * Reads text from any open window (via OCR).
 * Simple Gradio chat interface.
+* Selectable Model: Choose your preferred OpenAI model from a dropdown.
 * Smart context (AI picks relevant windows) or force reading all windows (via always-visible checkbox).
 * See your messages instantly while AI responds.
 * Remembers conversation history for follow-ups.
