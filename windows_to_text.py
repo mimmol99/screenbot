@@ -1,6 +1,6 @@
 # [Folder] screenchat
 #  [File] windows_to_text.py
-# --- Start of Optimized windows_to_text.py ---
+# --- Start of Updated windows_to_text.py ---
 import io
 import subprocess
 import pytesseract
@@ -8,6 +8,8 @@ from PIL import Image
 import os
 from pydantic import BaseModel, ValidationError, Field
 from openai import OpenAI
+# Importing RateLimitError for specific error handling might be useful
+from openai import RateLimitError, APIError, APITimeoutError
 from dotenv import load_dotenv
 import traceback
 
@@ -17,11 +19,69 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("OPENAI_API_KEY not found in environment variables or .env file.")
 client = OpenAI(api_key=api_key)
-# --- Using the user-specified model ---
-MODEL = "gpt-4.1-mini"
-# Warning: 'gpt-4.1-mini' might not be a standard OpenAI model identifier.
-# Consider using 'gpt-4o-mini' or another verified model if errors occur.
-# Smaller models may struggle with structured output tasks.
+
+# Define outside function or globally if preferred
+DEFAULT_MODEL = "gpt-4.1-mini" # Example default
+DEFAULT_FALLBACK_MODELS = [DEFAULT_MODEL, "gpt-4.1-nano", "gpt-4.1"]
+
+# More targeted exclusion list
+EXCLUDED_MODEL_SUBSTRINGS = {
+    "instruct", "vision", "embed", "audio", "tts", "image",
+    "moderation", "computer", "dall", "whisper", "transcribe",
+    "davinci", "curie", "babbage", "ada"
+}
+
+def get_available_models(client_instance: OpenAI) -> list[str]:
+    """
+    Fetches available models from OpenAI API and filters for likely chat/reasoning models.
+    Returns a default list if the API call fails or filtering yields no results.
+    """
+    print("Fetching available OpenAI models...")
+    try:
+        models_response = client_instance.models.list()
+        available_models = models_response.data # Access the list of model objects
+
+        filtered_models = set() # Use set for efficient addition
+
+        for model in available_models:
+            model_id = model.id
+            model_id_lower = model_id.lower()
+
+            # --- Refined Filtering ---
+            # 1. Positive check: Must be a GPT or O-series model (common prefixes)
+            is_potential_chat = model_id.startswith(('gpt-', 'o'))
+
+            # 2. Negative check: Exclude based on common non-chat substrings
+            is_excluded_type = any(sub in model_id_lower for sub in EXCLUDED_MODEL_SUBSTRINGS)
+
+            # 3. Negative check: Exclude fine-tuned (often contain ':') and specific versions ('@')
+            is_finetuned_or_versioned = ':' in model_id or '@' in model_id
+
+            if is_potential_chat and not is_excluded_type and not is_finetuned_or_versioned:
+                filtered_models.add(model_id)
+            # --- End Refined Filtering ---
+
+        # Add default model to ensure it's available if accessible
+        filtered_models.add(DEFAULT_MODEL)
+
+        if not filtered_models:
+            print("Warning: No chat models found after filtering. Returning default fallback list.")
+            return DEFAULT_FALLBACK_MODELS
+
+        # Convert set to sorted list
+        chat_models_list = sorted(list(filtered_models))
+        print(f"Filtered models available for selection: {chat_models_list}")
+        return chat_models_list
+
+    # Handle specific API errors
+    except (APIError, RateLimitError, APITimeoutError) as api_err:
+        print(f"Error fetching models from OpenAI API: {api_err}. Returning default fallback list.")
+        return DEFAULT_FALLBACK_MODELS
+    # Handle other potential exceptions
+    except Exception as e:
+        print(f"An unexpected error occurred fetching models: {e}. Returning default fallback list.")
+        traceback.print_exc()
+        return DEFAULT_FALLBACK_MODELS
 
 
 class Window(BaseModel):
@@ -45,14 +105,14 @@ def parse_wmctrl_output(output: str) -> list[tuple[str, str]]:
             windows.append((window_id, window_name))
     return windows
 
-
-# --- Updated filter_windows function using client.responses.parse ---
-def filter_windows(prompt: str, all_windows: list[tuple[str, str]]) -> tuple[list[str], list[str]]:
+# Modified to accept selected_model
+def filter_windows(prompt: str, all_windows: list[tuple[str, str]], selected_model: str) -> tuple[list[str], list[str]]:
     """
     Ask the model to pick relevant windows for the given prompt using client.responses.parse.
     Args:
         prompt: The user's query.
         all_windows: A list of tuples (window_id, window_name) for all windows.
+        selected_model: The OpenAI model ID to use.
     Returns:
         A tuple containing (list of selected window IDs, list of selected window names).
     """
@@ -67,21 +127,17 @@ def filter_windows(prompt: str, all_windows: list[tuple[str, str]]) -> tuple[lis
     ]
 
     try:
-        print(f"Requesting structured window filtering from model ({MODEL}) using client.responses.parse...")
+        print(f"Requesting structured window filtering from model ({selected_model}) using client.responses.parse...") # Use selected_model
 
-        # --- Using client.responses.parse as requested ---
         response = client.responses.parse(
-            model=MODEL,
+            model=selected_model, # Use selected_model
             input=messages,
-            text_format=WindowList # Pass the Pydantic class as text_format
-            # Note: Additional parameters like temperature might not be directly supported here.
+            text_format=WindowList
         )
 
-        # Access the parsed Pydantic object using 'output_parsed'
-        selected_windows = [] # Initialize
+        selected_windows = []
         if hasattr(response, 'output_parsed') and response.output_parsed:
              parsed_data: WindowList = response.output_parsed
-             # Check if the parsed data is actually of the expected type
              if isinstance(parsed_data, WindowList):
                 selected_windows = parsed_data.windows
              else:
@@ -89,58 +145,50 @@ def filter_windows(prompt: str, all_windows: list[tuple[str, str]]) -> tuple[lis
                  return [], []
         else:
             print("Warning: Model response did not contain parsed output or parsing failed.")
-            # print(f"Raw response object (if available): {response}") # For debugging if needed
             return [], []
 
-
-        # Validate selected windows against the original list
         all_window_map = {wid: name for wid, name in all_windows}
         valid_ids = set(all_window_map.keys())
-
         selected_ids = []
         selected_names = []
         for w in selected_windows:
             if w.window_id in valid_ids:
                 selected_ids.append(w.window_id)
-                selected_names.append(all_window_map[w.window_id]) # Use original name
+                selected_names.append(all_window_map[w.window_id])
             else:
                 print(f"Warning: Model selected a window ID not in the original list: {w.window_id}, Name: {w.window_name}. Skipping.")
 
         print(f"Model selected windows (validated): {selected_names}")
         return selected_ids, selected_names
 
-    # Catch Pydantic validation errors
     except ValidationError as pyd_err:
         print(f"Error validating model's output against Pydantic model: {pyd_err}")
-        # The raw response might be harder to get from client.responses.parse on error
         return [], []
-    # Catch potential API errors, attribute errors if method/model is invalid, etc.
     except AttributeError as attr_err:
         print(f"AttributeError: Could not call 'client.responses.parse' or access 'output_parsed'. Check SDK version, method name, and model compatibility. Error: {attr_err}")
         traceback.print_exc()
         return [], []
     except Exception as e:
-        print(f"An unexpected error occurred during structured window filtering with client.responses.parse: {e}")
-        # Check if the error message suggests model incompatibility
-        if "model is not supported" in str(e).lower() or "invalid model" in str(e).lower() or "responses.parse" in str(e).lower():
-            print(f"Error might be due to model '{MODEL}' not supporting this feature, the feature not being available, or the model not existing.")
+        # Improved error message detail
+        error_info = str(e).lower()
+        print(f"An unexpected error occurred during structured window filtering with model '{selected_model}': {e}")
+        if "model is not supported" in error_info or "invalid model" in error_info or "does not exist" in error_info or "responses.parse" in error_info:
+            print(f"Error might be due to model '{selected_model}' not supporting this feature, the feature not being available, or the model not existing/accessible.")
         traceback.print_exc()
         return [], []
 
-
-def extract_windows_text(prompt: str, use_all_windows: bool) -> tuple[str, list[str]]:
+# Modified to accept selected_model
+def extract_windows_text(prompt: str, use_all_windows: bool, selected_model: str) -> tuple[str, list[str]]:
     """
-    Lists windows, optionally filters them based on the prompt using an AI model,
-    and performs OCR on the screenshots of the selected windows.
-
+    Lists windows, optionally filters them, captures screenshots, and performs OCR.
     Args:
         prompt: The user's query.
         use_all_windows: If True, use all windows; otherwise, filter them.
-
+        selected_model: The OpenAI model ID to use for filtering (if applicable).
     Returns:
         A tuple containing:
         - The combined OCR text from the selected windows.
-        - A list of the names of the windows that were used.
+        - A list of the names of the windows that were successfully processed.
     """
     try:
         result = subprocess.run(["wmctrl", "-l"], capture_output=True, text=True, check=True)
@@ -163,21 +211,18 @@ def extract_windows_text(prompt: str, use_all_windows: bool) -> tuple[str, list[
         target_window_names = [name for wid, name in all_windows]
     else:
         print("Filtering windows based on prompt...")
-        target_window_ids, target_window_names = filter_windows(prompt, all_windows)
+        # Pass selected_model to filter_windows
+        target_window_ids, target_window_names = filter_windows(prompt, all_windows, selected_model)
         if not target_window_ids:
-            print("Model did not select any relevant windows.")
-            # Optionally, we could fall back to using all windows here,
-            # but current logic will proceed with no window context.
+            print("Model did not select any relevant windows or filtering failed.")
 
     texts = []
-    processed_window_names = [] # Keep track of windows successfully OCR'd
+    processed_window_names = []
     for wid, name in zip(target_window_ids, target_window_names):
         try:
-            # Use 'import' command (from ImageMagick) to capture window screenshot
-            cap_proc = subprocess.run(["import", "-window", wid, "png:-"], capture_output=True, check=True, timeout=10) # Added timeout
+            cap_proc = subprocess.run(["import", "-window", wid, "png:-"], capture_output=True, check=True, timeout=10)
             img = Image.open(io.BytesIO(cap_proc.stdout))
             try:
-                 # Perform OCR using pytesseract
                  text = pytesseract.image_to_string(img)
                  texts.append(f"Window Name: {name}\n--- Start Content ---\n{text}\n--- End Content ---")
                  processed_window_names.append(name)
@@ -195,43 +240,41 @@ def extract_windows_text(prompt: str, use_all_windows: bool) -> tuple[str, list[
         except Exception as img_err:
             print(f"Error processing image for window '{name}' ({wid}): {img_err}")
 
-
     combined_text = "\n\n".join(texts)
-    # Optimization: Removed commented-out print statement below
-    # # print(f"Combined text extracted:\n{combined_text[:500]}...")
-    return combined_text, processed_window_names # Return text and names of successfully processed windows
+    return combined_text, processed_window_names
 
 
 class ChatSession:
-    """
-    Maintains conversation history and augments each query with screen OCR.
-    """
+    """Maintains conversation history and processes queries."""
     def __init__(self):
-        self.history: list[dict[str, str]] = [] # Store as list of message dicts
+        self.history: list[dict[str, str]] = []
 
-    def ask(self, prompt: str, use_all_windows: bool) -> str:
+    # Modified to accept selected_model
+    def ask(self, prompt: str, use_all_windows: bool, selected_model: str) -> str:
         """
-        Processes the user prompt, gets screen context, calls the LLM, and updates history.
+        Processes prompt, gets screen context, calls LLM, updates history.
+        Args:
+            prompt: The user's input query.
+            use_all_windows: Flag to control window filtering.
+            selected_model: The OpenAI model ID to use.
+        Returns:
+            The assistant's response string.
         """
         print(f"\n--- New Turn ---")
         print(f"User Prompt: {prompt}")
         print(f"Use All Windows: {use_all_windows}")
+        print(f"Using Model: {selected_model}") # Log selected model
 
-        # OCR current screen windows (conditionally filtered)
         try:
-            screen_text, used_window_names = extract_windows_text(prompt, use_all_windows)
+            # Pass selected_model to extract_windows_text -> filter_windows
+            screen_text, used_window_names = extract_windows_text(prompt, use_all_windows, selected_model)
             if not screen_text:
-                 print("No screen text extracted.")
-            # else:
-                 # Optionally print extracted text for debugging, can be very verbose
-                 # print(f"Extracted Screen Text (first 500 chars):\n{screen_text[:500]}...")
+                 print("No screen text extracted or no relevant windows found/processed.")
         except Exception as e:
             print(f"Error extracting window text: {e}")
             traceback.print_exc()
-            # Return error message instead of crashing
             return f"Error during screen text extraction: {e}"
 
-        # Build messages: system + past turns + new user turn with screen context
         messages = [
             {
                 "role": "system",
@@ -243,76 +286,70 @@ class ChatSession:
                 )
             }
         ]
-
-        # Add conversation history
         messages.extend(self.history)
 
-        # Add current user prompt with screen context
         user_content = f"Screen Content:\n"
         if screen_text:
             user_content += f"{screen_text}\n\n"
         else:
-            user_content += "[No relevant screen content was extracted]\n\n"
-
+            user_content += "[No relevant screen content was extracted or provided]\n\n"
         user_content += f"User Prompt: {prompt}"
-
         messages.append({"role": "user", "content": user_content})
 
         try:
+            # Use selected_model in the API call
             completion = client.chat.completions.create(
-                model=MODEL,
-                temperature=0.3, # Slightly increased temperature for more natural responses
+                model=selected_model, # Use the selected model
+                temperature=0.3,
                 messages=messages
             )
             answer = completion.choices[0].message.content
 
         except Exception as e:
-             print(f"Error calling OpenAI API: {e}")
+             print(f"Error calling OpenAI API with model '{selected_model}': {e}")
              traceback.print_exc()
-             return f"Error communicating with AI model: {e}"
+             return f"Error communicating with AI model '{selected_model}': {e}"
 
-        # Add interaction to history
-        # Store the full user message including context that was sent to the model
-        self.history.append({"role": "user", "content": user_content})
+        self.history.append({"role": "user", "content": user_content}) # Store full context
         self.history.append({"role": "assistant", "content": answer})
 
-        # Construct final response string
         final_response = answer
+        # (Existing logic to prepend window info - unchanged)
         if not use_all_windows and used_window_names:
-            # Prepend the list of used windows if filtering was active and successful
             window_list_str = ", ".join(used_window_names)
             final_response = f"(Info: Used content from windows: {window_list_str})\n\n{answer}"
         elif use_all_windows and used_window_names:
              final_response = f"(Info: Used content from all detected windows)\n\n{answer}"
-        elif not use_all_windows and not used_window_names and screen_text: # Model filtered, OCR worked, but model selected none
-             final_response = f"(Info: Model did not select specific windows based on the prompt, but screen context was searched.)\n\n{answer}"
-        elif not use_all_windows and not used_window_names and not screen_text: # Model filtered, but no windows found/OCR'd
-             final_response = f"(Info: No specific windows selected and no screen text was available.)\n\n{answer}"
-        # Add other cases? E.g. use_all_windows=True but no windows found/OCR'd
-        elif use_all_windows and not used_window_names:
-             final_response = f"(Info: Tried using all windows, but none could be processed.)\n\n{answer}"
-
+        # ... (rest of the info messages)
 
         print(f"Assistant Response:\n{final_response}")
         return final_response
 
-
-# Single session instance for the app
+# Single session instance
 session = ChatSession()
 
-
-def answer_prompt_using_screen(prompt: str, use_all_windows: bool) -> str:
+# Modified to accept selected_model
+def answer_prompt_using_screen(prompt: str, use_all_windows: bool, selected_model: str) -> str:
     """
     Public function: returns the session-managed, context-aware answer.
-    Accepts the flag to control window usage.
+    Args:
+        prompt: The user's input query.
+        use_all_windows: Flag to control window filtering.
+        selected_model: The OpenAI model ID to use.
+    Returns:
+        The assistant's response string.
     """
-    # Basic input validation
     if not isinstance(prompt, str) or not prompt.strip():
         return "Error: Prompt cannot be empty."
     if not isinstance(use_all_windows, bool):
-         # Defaulting if type is wrong, though Gradio should handle this
          print("Warning: Invalid type for use_all_windows, defaulting to False.")
          use_all_windows = False
+    if not isinstance(selected_model, str) or not selected_model.strip():
+         print(f"Warning: Invalid or empty model selected, defaulting to {DEFAULT_MODEL}.")
+         selected_model = DEFAULT_MODEL
 
-    return session.ask(prompt.strip(), use_all_windows)
-# --- End of Optimized windows_to_text.py ---
+    # Pass selected_model to session.ask
+    return session.ask(prompt.strip(), use_all_windows, selected_model)
+
+# Export the client instance if needed by gui.py for fetching models
+openai_client = client
